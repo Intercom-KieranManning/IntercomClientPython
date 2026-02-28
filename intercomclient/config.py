@@ -1,8 +1,8 @@
-from dataclasses import dataclass
-from typing import Tuple
-from pathlib import Path
 import logging
 import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Tuple
 
 
 @dataclass()

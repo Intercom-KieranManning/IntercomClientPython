@@ -1,6 +1,8 @@
-import pytest
 import tempfile
+
+import pytest
 from intercomclient.video_pipeline import VideoPipeline
+
 from tests.integration.conftest import config as test_config
 
 

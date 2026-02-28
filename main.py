@@ -2,19 +2,20 @@ import asyncio
 import json
 import logging
 import signal
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import websockets
 from aiortc import RTCPeerConnection, RTCSessionDescription
+from requests import HTTPError
 
+from intercomclient.camera_video_stream_track import CameraVideoStreamTrack
 from intercomclient.config import Config
-from intercomclient.token_store import TokenStore, TokenStatus
 from intercomclient.device_authorization import (
     initiate_device_authorization,
     poll_for_token,
     refresh_tokens,
 )
-from intercomclient.camera_video_stream_track import CameraVideoStreamTrack
+from intercomclient.token_store import TokenStatus, TokenStore
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger("pi-client")
@@ -91,10 +92,15 @@ class PiClient:
     def refresh_flow(self):
         tokens = self.token_store.load_tokens()
 
-        refresh_response = refresh_tokens(
-            self.config,
-            tokens["refresh"]["token_value"],
-        )
+        try:
+            refresh_response = refresh_tokens(
+                self.config,
+                tokens["refresh"]["token_value"],
+            )
+
+        except HTTPError as e:
+            LOG.error("Token refresh failed: %s", e)
+            print(refresh_response)
 
         expiry = (
             datetime.now(tz=UTC) + timedelta(seconds=refresh_response["expires_in"])
@@ -121,9 +127,6 @@ class PiClient:
             if self.pc.connectionState in ("failed", "closed"):
                 await self.shutdown()
 
-        camera_track = CameraVideoStreamTrack(self.config)
-        self.pc.addTrack(camera_track)
-
     async def signaling_loop(self):
         token_store = self.token_store.load_tokens()
         access_token = token_store["access"]["token_value"]
@@ -142,48 +145,57 @@ class PiClient:
 
             await self.setup_peer_connection()
 
-            # Create offer
-            # offer = await self.pc.createOffer()
-            # await self.pc.setLocalDescription(offer)
-
-            # await ws.send(
-            #     json.dumps(
-            #         {
-            #             "type": "offer",
-            #             "sdp": self.pc.localDescription.sdp,
-            #         }
-            #     )
-            # )
+            @self.pc.on("icecandidate")
+            async def on_icecandidate(self, candidate):
+                print(f"ICE candidate generated: {candidate}")
+                if candidate is not None:
+                    # Send the candidate to the signaling server
+                    await self.ws.send_json(
+                        json.dumps(
+                            {
+                                "type": "ice",
+                                "candidate": {
+                                    "candidate": candidate.component,
+                                    "sdpMid": candidate.sdpMid,
+                                    "sdpMLineIndex": candidate.sdpMLineIndex,
+                                    "foundation": candidate.foundation,
+                                    "priority": candidate.priority,
+                                    "ip": candidate.address,
+                                    "port": candidate.port,
+                                    "protocol": candidate.protocol,
+                                    "type": candidate.type,
+                                },
+                            }
+                        )
+                    )
 
             async for message in ws:
                 data = json.loads(message)
                 print(f"Received message: {data}")
 
                 if data["type"] == "offer":
-                    try:
-                        await self.pc.setRemoteDescription(
-                            RTCSessionDescription(
-                                sdp=data["sdp"],
-                                type=data["type"],
-                            )
+                    await self.pc.setRemoteDescription(
+                        RTCSessionDescription(
+                            sdp=data["sdp"],
+                            type=data["type"],
                         )
-                        print("Remote description set successfully")
-                    except Exception as e:
-                        print("setRemoteDescription failed:", e)
-                        raise
+                    )
 
                     camera_track = CameraVideoStreamTrack(self.config)
-                    await self.pc.addTrack(camera_track)
-
-                    print("Sending answer...")
+                    self.pc.addTrack(camera_track)
                     answer = await self.pc.createAnswer()
+
                     await self.pc.setLocalDescription(answer)
-                    await self.ws.send_json(
-                        {
-                            "type": self.pc.localDescription.type,
-                            "sdp": self.pc.localDescription.sdp,
-                        }
+                    print(self.pc.localDescription.type)
+                    await self.ws.send(
+                        json.dumps(
+                            {
+                                "type": self.pc.localDescription.type,
+                                "sdp": self.pc.localDescription.sdp,
+                            }
+                        )
                     )
+                    print("Answer sent successfully")
 
                 elif data["type"] == "ice":
                     await self.pc.addIceCandidate(data["candidate"])

@@ -1,8 +1,13 @@
-from .device import get_device_type, get_os_info
-from .config import Config
-from time import sleep
+import logging
 from datetime import datetime, timedelta
+from time import sleep
+
 import requests
+
+from .config import Config
+from .device import get_device_type, get_os_info
+
+LOG = logging.getLogger(__name__)
 
 
 def initiate_device_authorization(config: Config) -> dict:
@@ -65,4 +70,10 @@ def refresh_tokens(config: Config, refresh_token) -> dict:
         },
     )
 
-    return api_response.json()
+    try:
+        api_response.raise_for_status()
+        response_json = api_response.json()
+        return response_json
+    except requests.HTTPError:
+        LOG.error("HTTP error during token refresh: %s", api_response.json())
+        return response_json

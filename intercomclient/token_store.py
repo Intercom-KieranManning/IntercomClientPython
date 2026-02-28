@@ -1,9 +1,10 @@
+import datetime
 import json
 import logging
 import os
-from .config import Config
-import datetime
 from enum import Enum
+
+from .config import Config
 
 LOG = logging.getLogger(__name__)
 

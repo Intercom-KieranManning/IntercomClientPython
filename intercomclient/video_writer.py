@@ -1,10 +1,12 @@
-from datetime import datetime
-import cv2
+import json
 import logging
 import os
-import json
 import time
+from datetime import datetime
 from pathlib import Path
+
+import cv2
+
 from intercomclient.segment import Segment
 
 LOG = logging.getLogger(__name__)

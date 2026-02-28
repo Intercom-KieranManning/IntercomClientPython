@@ -1,9 +1,11 @@
-import cv2
-import logging
-from intercomclient.config import Config
-from aiortc import VideoStreamTrack
-import av
 import asyncio
+import logging
+
+import av
+import cv2
+from aiortc import VideoStreamTrack
+
+from intercomclient.config import Config
 
 LOG = logging.getLogger(__name__)
 
@@ -13,8 +15,9 @@ class CameraVideoStreamTrack(VideoStreamTrack):
         self.config = config
         self.target_fps = config.target_fps
         self.capture = cv2.VideoCapture(config.video_source)
+        LOG.info("Initialized video capture with source: %s", config.video_source)
         if not self.capture.isOpened():
-            raise ValueError("Unable to open video source")
+            raise ValueError("Unable to open video source: %s", config.video_source)
         self.segment_number = 0
         super().__init__()
 
