@@ -26,7 +26,7 @@ jobs:
         run: uv sync
 
       - name: Run tests
-        run: uv run pytest tests/integration/intercomclient/test_video_pipeline.py
+        run: uv run pytest
 
   build:
     name: Build .deb
