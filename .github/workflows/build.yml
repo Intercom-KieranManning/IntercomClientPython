@@ -10,19 +10,53 @@ env:
   PKG_DEPENDS: "libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, libv4l-0"
 
 jobs:
-  build:
-    runs-on: [ubuntu-22.04-arm]
+  test:
+    name: Run tests
+    runs-on: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@v5
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest tests/integration/intercomclient/test_video_pipeline.py
+
+  build:
+    name: Build .deb
+    needs: test
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install project dependencies
         run: uv sync
 
       - name: Install Nuitka
         run: uv pip install nuitka
+
+      - name: Cache Nuitka build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            dist/
+            build/
+            main.build/
+            main.dist/
+            main.onefile-build/
+          key: nuitka-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'main.py', 'intercomclient/**/*.py') }}
 
       - name: Build native binary with Nuitka
         run: >
@@ -64,17 +98,14 @@ jobs:
           PKG_DIR="dist/${PKG_NAME}_${PKG_VERSION}_${PKG_ARCH}"
           DEB_FILE="${PKG_DIR}.deb"
 
-          # Create Debian package directory structure
           mkdir -p "${PKG_DIR}/usr/local/bin"
           mkdir -p "${PKG_DIR}/lib/systemd/system"
           mkdir -p "${PKG_DIR}/etc/intercom-client"
           mkdir -p "${PKG_DIR}/DEBIAN"
 
-          # Install the Nuitka binary
           cp dist/intercom-client "${PKG_DIR}/usr/local/bin/"
           chmod 755 "${PKG_DIR}/usr/local/bin/intercom-client"
 
-          # Write control file
           cat > "${PKG_DIR}/DEBIAN/control" <<EOF
           Package: ${PKG_NAME}
           Version: ${PKG_VERSION}
@@ -88,7 +119,6 @@ jobs:
            and streams live video via WebRTC.
           EOF
 
-          # Create environment configuration placeholder
           cat > "${PKG_DIR}/etc/intercom-client/env" <<EOF
           # Intercom Client Configuration
           # Set your environment variables here — these are sourced by the systemd service.
@@ -101,7 +131,6 @@ jobs:
           # HTTP_API_BASE_URL=https://your-server.com
           EOF
 
-          # Write systemd service unit
           cat > "${PKG_DIR}/lib/systemd/system/intercom-client.service" <<EOF
           [Unit]
           Description=Intercom Pi Client
@@ -121,7 +150,6 @@ jobs:
           WantedBy=multi-user.target
           EOF
 
-          # Build the .deb package
           dpkg-deb --build "${PKG_DIR}"
 
           echo "--- Built package ---"
