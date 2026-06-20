@@ -120,13 +120,20 @@ class PiClient:
     # =========================
 
     async def setup_peer_connection(self):
+        if self.pc:
+            await self.pc.close()
         self.pc = RTCPeerConnection()
 
         @self.pc.on("connectionstatechange")
         async def on_connectionstatechange():
             LOG.info("WebRTC state: %s", self.pc.connectionState)
-            if self.pc.connectionState in ("failed", "closed"):
+            if self.pc.connectionState == "failed":
                 await self.shutdown()
+            elif self.pc.connectionState == "closed":
+                # Remote peer disconnected; close WebSocket to break out of
+                # the signaling loop so run() can reconnect.
+                if self.ws:
+                    await self.ws.close()
 
     async def signaling_loop(self):
         token_store = self.token_store.load_tokens()
@@ -156,12 +163,10 @@ class PiClient:
                     await self.ws.send(
                         json.dumps(
                             {
-                                "type": "ice",
-                                "candidate": {
-                                    "candidate": candidate.candidate,
-                                    "sdpMid": candidate.sdpMid,
-                                    "sdpMLineIndex": candidate.sdpMLineIndex,
-                                },
+                                "type": "candidate",
+                                "candidate": candidate.candidate,
+                                "sdpMid": candidate.sdpMid,
+                                "sdpMLineIndex": candidate.sdpMLineIndex,
                             }
                         )
                     )
@@ -178,8 +183,15 @@ class PiClient:
                         )
                     )
 
-                    camera_track = CameraVideoStreamTrack(self.config)
-                    self.pc.addTrack(camera_track)
+                    try:
+                        camera_track = CameraVideoStreamTrack(self.config)
+                        self.pc.addTrack(camera_track)
+                        LOG.info("Camera track added successfully")
+                    except Exception as e:
+                        LOG.warning(
+                            "Camera unavailable (%s), sending answer without video", e
+                        )
+
                     answer = await self.pc.createAnswer()
 
                     await self.pc.setLocalDescription(answer)
@@ -193,14 +205,23 @@ class PiClient:
                     )
                     LOG.info("Answer sent successfully")
 
-                elif data["type"] == "ice" and data.get("candidate"):
-                    c = data["candidate"]
+                elif data["type"] in ("ice", "candidate") and data.get("candidate"):
                     ice_candidate = RTCIceCandidate(
-                        sdpMid=c["sdpMid"],
-                        sdpMLineIndex=c["sdpMLineIndex"],
-                        candidate=c["candidate"],
+                        sdpMid=data.get("sdpMid"),
+                        sdpMLineIndex=data.get("sdpMLineIndex"),
+                        candidate=data["candidate"],
                     )
                     await self.pc.addIceCandidate(ice_candidate)
+
+                elif (
+                    data["type"] == "status"
+                    and data.get("event") == "peer_disconnected"
+                ):
+                    LOG.info(
+                        "Remote peer disconnected; closing WebSocket to trigger reconnect"
+                    )
+                    if self.ws:
+                        await self.ws.close()
 
     # =========================
     # Lifecycle
