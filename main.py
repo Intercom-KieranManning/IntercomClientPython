@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import websockets
 from aiortc import (
+    RTCConfiguration,
+    RTCIceServer,
     RTCPeerConnection,
     RTCSessionDescription,
 )
@@ -135,12 +137,12 @@ class PiClient:
             await old_pc.close()
 
         pc = RTCPeerConnection(
-            configuration={
-                "iceServers": [
-                    {"urls": "stun:stun.l.google.com:19302"},
-                    {"urls": "stun:stun1.l.google.com:19302"},
+            configuration=RTCConfiguration(
+                iceServers=[
+                    RTCIceServer(urls="stun:stun.l.google.com:19302"),
+                    RTCIceServer(urls="stun:stun1.l.google.com:19302"),
                 ]
-            }
+            )
         )
         self.pc = pc
 
