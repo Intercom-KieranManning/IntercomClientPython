@@ -41,6 +41,9 @@ class Config:
     http_api_base_url: str = os.getenv("HTTP_API_BASE_URL", "wrong")
     websocket_api_base_url: str = os.getenv("WEBSOCKET_API_BASE_URL", "wrong")
     max_polling_time_mins: int = int(os.getenv("MAX_POLLING_TIME_MINS", 5))
+    turn_url: str | None = os.getenv("TURN_URL")
+    turn_username: str | None = os.getenv("TURN_USERNAME")
+    turn_credential: str | None = os.getenv("TURN_CREDENTIAL")
 
 
 logging.basicConfig(level=logging.DEBUG if Config.debug_mode else logging.INFO)

@@ -136,14 +136,23 @@ class PiClient:
         if old_pc:
             await old_pc.close()
 
-        pc = RTCPeerConnection(
-            configuration=RTCConfiguration(
-                iceServers=[
-                    RTCIceServer(urls="stun:stun.l.google.com:19302"),
-                    RTCIceServer(urls="stun:stun1.l.google.com:19302"),
-                ]
+        ice_servers = [
+            RTCIceServer(urls="stun:stun.l.google.com:19302"),
+            RTCIceServer(urls="stun:stun1.l.google.com:19302"),
+        ]
+        if (
+            self.config.turn_url
+            and self.config.turn_username
+            and self.config.turn_credential
+        ):
+            ice_servers.append(
+                RTCIceServer(
+                    urls=self.config.turn_url,
+                    username=self.config.turn_username,
+                    credential=self.config.turn_credential,
+                )
             )
-        )
+        pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
         self.pc = pc
 
         @pc.on("connectionstatechange")
