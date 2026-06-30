@@ -14,13 +14,17 @@ from aiortc import (
 from aiortc.sdp import candidate_from_sdp
 from requests import HTTPError
 
-from intercomclient.camera_video_stream_track import CameraVideoStreamTrack
+from intercomclient.camera_video_stream_track import (
+    CameraVideoStreamTrack,
+    SharedCameraSource,
+)
 from intercomclient.config import Config
 from intercomclient.device_authorization import (
     initiate_device_authorization,
     poll_for_token,
     refresh_tokens,
 )
+from intercomclient.otel import setup_telemetry
 from intercomclient.telemetry import TelemetryClient
 from intercomclient.token_store import TokenStatus, TokenStore
 from intercomclient.turn import fetch_turn_credentials
@@ -36,6 +40,7 @@ class PiClient:
         self.telemetry = TelemetryClient(config, self.token_store)
         self.peer_connections: dict[str, RTCPeerConnection] = {}
         self.camera_tracks: dict[str, CameraVideoStreamTrack] = {}
+        self._camera_source: SharedCameraSource | None = None
         self.ws = None
         self.running = True
         self.turn_credentials: dict | None = None
@@ -149,6 +154,17 @@ class PiClient:
             )
         return servers
 
+    def _get_or_create_camera_source(self) -> SharedCameraSource:
+        if self._camera_source is None or not self._camera_source.capture.isOpened():
+            self._camera_source = SharedCameraSource(self.config)
+            self._camera_source.start()
+        return self._camera_source
+
+    async def _release_camera_if_idle(self) -> None:
+        if not self.peer_connections and self._camera_source is not None:
+            await self._camera_source.stop()
+            self._camera_source = None
+
     async def setup_peer_connection(self, viewer_channel: str) -> RTCPeerConnection:
         old_track = self.camera_tracks.pop(viewer_channel, None)
         if old_track:
@@ -243,10 +259,13 @@ class PiClient:
                     )
 
                     try:
-                        camera_track = CameraVideoStreamTrack(self.config)
+                        camera_source = self._get_or_create_camera_source()
+                        camera_track = CameraVideoStreamTrack(
+                            camera_source, viewer_channel
+                        )
                         self.camera_tracks[viewer_channel] = camera_track
                         pc.addTrack(camera_track)
-                        LOG.info("Camera track added successfully")
+                        LOG.info("Camera track added for viewer %s", viewer_channel)
                     except Exception as e:
                         LOG.warning(
                             "Camera unavailable (%s), sending answer without video", e
@@ -300,6 +319,7 @@ class PiClient:
                     await asyncio.to_thread(
                         self.telemetry.send, "disconnected", "Viewer disconnected"
                     )
+                    await self._release_camera_if_idle()
                     if not self.peer_connections:
                         await asyncio.to_thread(self.telemetry.send, "connected")
 
@@ -311,6 +331,9 @@ class PiClient:
             pc = self.peer_connections.pop(vc, None)
             if pc:
                 await pc.close()
+        if self._camera_source is not None:
+            await self._camera_source.stop()
+            self._camera_source = None
 
     # =========================
     # Lifecycle
@@ -354,6 +377,7 @@ class PiClient:
 
 
 async def main():
+    setup_telemetry("intercom-pi-client")
     config = Config()
     client = PiClient(config)
 
