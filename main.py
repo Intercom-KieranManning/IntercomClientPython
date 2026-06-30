@@ -35,6 +35,7 @@ class PiClient:
         self.token_store = TokenStore(config)
         self.telemetry = TelemetryClient(config, self.token_store)
         self.peer_connections: dict[str, RTCPeerConnection] = {}
+        self.camera_tracks: dict[str, CameraVideoStreamTrack] = {}
         self.ws = None
         self.running = True
         self.turn_credentials: dict | None = None
@@ -149,7 +150,9 @@ class PiClient:
         return servers
 
     async def setup_peer_connection(self, viewer_channel: str) -> RTCPeerConnection:
-        # Close existing PC for this viewer if there is one
+        old_track = self.camera_tracks.pop(viewer_channel, None)
+        if old_track:
+            old_track.stop()
         old_pc = self.peer_connections.pop(viewer_channel, None)
         if old_pc:
             await old_pc.close()
@@ -241,6 +244,7 @@ class PiClient:
 
                     try:
                         camera_track = CameraVideoStreamTrack(self.config)
+                        self.camera_tracks[viewer_channel] = camera_track
                         pc.addTrack(camera_track)
                         LOG.info("Camera track added successfully")
                     except Exception as e:
@@ -286,6 +290,9 @@ class PiClient:
                     and data.get("peer_type") != "device"
                 ):
                     viewer_channel = data.get("viewer_channel", "")
+                    track = self.camera_tracks.pop(viewer_channel, None)
+                    if track:
+                        track.stop()
                     pc = self.peer_connections.pop(viewer_channel, None)
                     if pc:
                         await pc.close()
@@ -295,6 +302,15 @@ class PiClient:
                     )
                     if not self.peer_connections:
                         await asyncio.to_thread(self.telemetry.send, "connected")
+
+    async def _cleanup_connections(self):
+        for vc in list(self.peer_connections.keys()):
+            track = self.camera_tracks.pop(vc, None)
+            if track:
+                track.stop()
+            pc = self.peer_connections.pop(vc, None)
+            if pc:
+                await pc.close()
 
     # =========================
     # Lifecycle
@@ -314,6 +330,9 @@ class PiClient:
             except Exception as e:
                 LOG.exception("Client error: %s", e)
                 await asyncio.to_thread(self.telemetry.send, "error", str(e), "ERROR")
+            finally:
+                await self._cleanup_connections()
+            if self.running:
                 await asyncio.sleep(5)
 
     async def shutdown(self):
@@ -323,9 +342,7 @@ class PiClient:
             self.telemetry.send, "disconnected", "Client shutting down"
         )
 
-        for pc in list(self.peer_connections.values()):
-            await pc.close()
-        self.peer_connections.clear()
+        await self._cleanup_connections()
 
         if self.ws:
             await self.ws.close()
